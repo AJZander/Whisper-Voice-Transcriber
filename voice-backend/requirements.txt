@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-socketio
+openai-whisper
+pyannote.audio==3.3.2
+torch==2.5.1
+ffmpeg-python

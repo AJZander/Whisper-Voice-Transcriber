@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"  # React app served on port 80 inside container
+    depends_on:
+      - backend
+    env_file:
+      - .env 
+    networks:
+      - voice-transcription_network
+
+  backend:
+    build:
+      context: ./voice-backend
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5000"
+    volumes:
+      - ./voice-backend:/app
+    env_file:
+      - .env  
+    networks:
+      - voice-transcription_network
+
+networks:
+  voice-transcription_network:
+    driver: bridge
