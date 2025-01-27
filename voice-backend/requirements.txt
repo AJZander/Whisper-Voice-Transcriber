@@ -1,7 +1,21 @@
+# No GPU
+# fastapi
+# uvicorn
+# python-socketio
+# openai-whisper
+# pyannote.audio==3.3.2
+# torch==2.5.1
+# ffmpeg-python
+
+#With GPU
 fastapi
 uvicorn
 python-socketio
 openai-whisper
-pyannote.audio==3.3.2
-torch==2.5.1
+pyannote.audio==3.3.0
+torch==2.2.0
+torchaudio==2.2.0
+torchvision
 ffmpeg-python
+noisereduce
+webrtcvad

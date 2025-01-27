@@ -1,5 +1,4 @@
-# main.py
-
+# voice-backend/main.py
 import os
 import asyncio
 import socketio
@@ -8,14 +7,18 @@ import uvicorn
 import tempfile
 import logging
 import subprocess
-import whisper
-import torch
-from pyannote.audio import Pipeline
-from fastapi.middleware.cors import CORSMiddleware
-import warnings
-import io
 
-# Suppress specific FutureWarnings
+# Import Whisper for transcription
+import whisper
+
+# Import pyannote for speaker diarization
+from pyannote.audio import Pipeline
+
+from fastapi.middleware.cors import CORSMiddleware
+
+import warnings
+
+# Suppress specific FutureWarnings from torch.load in whisper and speechbrain
 warnings.filterwarnings(
     "ignore",
     message=r".*torch.load.*weights_only=False.*",
@@ -42,7 +45,7 @@ app = FastAPI()
 # Configure CORS
 origins = [
     "http://localhost:3000",
-    "http://frontend",
+    "http://frontend",  # Docker service name
     # Add other origins if necessary
 ]
 
@@ -58,11 +61,10 @@ app.add_middleware(
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins=origins)
 app.mount("/socket.io", socketio.ASGIApp(sio))
 
-# Initialize Whisper model with GPU
+# Initialize Whisper model
 logger.info("Loading Whisper model...")
-device = "cuda" if torch.cuda.is_available() else "cpu"
-whisper_model = whisper.load_model("base").to(device)  # Upgraded to "base"
-logger.info(f"Whisper model loaded on {device}.")
+whisper_model = whisper.load_model("base")  # Choose appropriate model size
+logger.info("Whisper model loaded.")
 
 # Retrieve Hugging Face token from environment variables
 hf_token = os.getenv("PYANNOTE_TOKEN")
@@ -84,7 +86,6 @@ except Exception as e:
 
 # Store raw PCM data per session
 audio_buffers = {}
-BUFFER_FLUSH_INTERVAL = 10  # Increased to 10 seconds
 
 @sio.event
 async def connect(sid, environ):
@@ -95,8 +96,6 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     logger.info(f"Client disconnected: {sid}")
-    if sid in audio_buffers and audio_buffers[sid]:
-        await process_audio(sid, bytes(audio_buffers[sid]))
     if sid in audio_buffers:
         del audio_buffers[sid]
 
@@ -108,6 +107,7 @@ async def audio_data(sid, data):
     """
     try:
         if sid not in audio_buffers:
+            # Initialize buffer if not present
             audio_buffers[sid] = bytearray()
         audio_buffers[sid] += data  # data is received as bytes
         logger.info(f"Received {len(data)} bytes of audio data from sid: {sid}")
@@ -118,52 +118,50 @@ async def audio_data(sid, data):
 async def flush_buffer_periodically(sid):
     try:
         while True:
-            await asyncio.sleep(BUFFER_FLUSH_INTERVAL)
+            await asyncio.sleep(2)  # Flush every 2 seconds
+            # Check if sid is still in audio_buffers
             if sid not in audio_buffers:
                 logger.info(f"Stopping flush_buffer_periodically for disconnected sid: {sid}")
                 break
             if audio_buffers[sid]:
                 audio_bytes = bytes(audio_buffers[sid])
                 audio_buffers[sid] = bytearray()
-                logger.info(f"Flushing {len(audio_bytes)} bytes of audio data for sid: {sid}")
-                await process_audio(sid, audio_bytes)
+
+                # Save raw PCM data to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as tmp_raw:
+                    tmp_raw.write(audio_bytes)
+                    tmp_raw_path = tmp_raw.name
+
+                logger.info(f"Periodically flushing audio data from {sid}, processing file {tmp_raw_path}")
+
+                # Run transcription and diarization in background
+                asyncio.create_task(process_audio(sid, tmp_raw_path))
     except Exception as e:
         logger.error(f"Error in flush_buffer_periodically for sid {sid}: {e}")
 
-async def process_audio(sid, audio_bytes):
+async def process_audio(sid, raw_path):
     try:
-        # Convert raw PCM to WAV in memory
-        process = subprocess.Popen([
+        # Define paths
+        wav_path = f"{raw_path}.wav"
+
+        # Convert raw PCM to WAV using ffmpeg
+        # Assuming 16-bit PCM, mono, sample rate 44100 Hz
+        subprocess.run([
             "ffmpeg",
             "-f", "s16le",          # Raw PCM format
-            "-ar", "192000",         # Updated sample rate
+            "-ar", "44100",         # Sample rate (match frontend)
             "-ac", "1",             # Mono
-            "-i", "pipe:0",         # Input from stdin
-            "-f", "wav",            # Output format
-            "pipe:1"                # Output to stdout
-        ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            "-i", raw_path,         # Input raw PCM file
+            "-ar", "16000",         # Target sample rate for Whisper
+            "-ac", "1",             # Mono
+            wav_path
+        ], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        wav_data, stderr = process.communicate(input=audio_bytes)
-        if process.returncode != 0:
-            logger.error(f"FFmpeg error for sid {sid}: {stderr.decode()}")
-            await sio.emit('error', {'message': 'Audio format conversion failed.'}, to=sid)
-            return
-
-        logger.info(f"Converted raw PCM to WAV for sid {sid}.")
-
-        # Save WAV to a temporary file in memory
-        wav_io = io.BytesIO(wav_data)
-
-        # Save WAV to a temporary file for Whisper and pyannote
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_wav:
-            tmp_wav.write(wav_io.getvalue())
-            wav_path = tmp_wav.name
-
-        logger.info(f"Temporary WAV file created at {wav_path} for sid {sid}.")
+        logger.info(f"Converted raw PCM to WAV: {wav_path}")
 
         # Transcription using Whisper
         logger.info(f"Transcribing audio for {sid} using Whisper...")
-        transcription = whisper_model.transcribe(wav_path, language="en")  # Specify language if needed
+        transcription = whisper_model.transcribe(wav_path)
         logger.info(f"Transcription completed for {sid}: {transcription['text']}")
 
         # Speaker Diarization using pyannote
@@ -188,18 +186,19 @@ async def process_audio(sid, audio_bytes):
         logger.info(f"Emitted transcription and speaker data to {sid}.")
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"FFmpeg conversion failed for sid {sid}: {e.stderr.decode()}")
+        logger.error(f"FFmpeg conversion failed for {sid}: {e.stderr.decode()}")
         await sio.emit('error', {'message': 'Audio format conversion failed.'}, to=sid)
     except Exception as e:
-        logger.error(f"Error processing audio for sid {sid}: {e}")
+        logger.error(f"Error processing audio for {sid}: {e}")
         await sio.emit('error', {'message': str(e)}, to=sid)
     finally:
         # Remove temporary files
         try:
+            os.remove(raw_path)
             os.remove(wav_path)
-            logger.info(f"Temporary file {wav_path} removed.")
+            logger.info(f"Temporary files {raw_path} and {wav_path} removed.")
         except Exception as e:
-            logger.error(f"Failed to remove temporary file {wav_path}: {e}")
+            logger.error(f"Failed to remove temporary files: {e}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=5000)

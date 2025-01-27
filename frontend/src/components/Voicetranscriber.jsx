@@ -10,9 +10,10 @@ const VoiceTranscriber = () => {
     const [isConnected, setIsConnected] = useState(false);
     const socketRef = useRef(null);
     const audioContextRef = useRef(null);
-    const scriptProcessorRef = useRef(null);
+    const audioWorkletNodeRef = useRef(null);
     const audioBufferRef = useRef([]);
-    const sampleRateRef = useRef(44100); // Default sample rate
+    const bufferLengthRef = useRef(0);
+    const BUFFER_DURATION = 1; // Buffer duration in seconds
 
     useEffect(() => {
         // Initialize WebSocket connection
@@ -64,30 +65,66 @@ const VoiceTranscriber = () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-            sampleRateRef.current = audioContextRef.current.sampleRate;
+            const audioContext = audioContextRef.current;
+            const sampleRate = audioContext.sampleRate;
+            console.log(`AudioContext Sample Rate: ${sampleRate} Hz`);
 
-            const source = audioContextRef.current.createMediaStreamSource(stream);
-            const bufferSize = 4096;
-            scriptProcessorRef.current = audioContextRef.current.createScriptProcessor(bufferSize, 1, 1);
+            // Define the AudioWorkletProcessor as a string
+            const workletCode = `
+                class AudioSenderProcessor extends AudioWorkletProcessor {
+                    constructor() {
+                        super();
+                    }
 
-            source.connect(scriptProcessorRef.current);
-            scriptProcessorRef.current.connect(audioContextRef.current.destination);
+                    process(inputs, outputs, parameters) {
+                        const input = inputs[0];
+                        if (input.length > 0) {
+                            const channelData = input[0];
+                            this.port.postMessage(channelData);
+                        }
+                        return true;
+                    }
+                }
 
-            scriptProcessorRef.current.onaudioprocess = (audioProcessingEvent) => {
-                const inputBuffer = audioProcessingEvent.inputBuffer;
-                const channelData = inputBuffer.getChannelData(0); // Mono channel
+                registerProcessor('audio-sender-processor', AudioSenderProcessor);
+            `;
+
+            // Create a Blob from the worklet code
+            const blob = new Blob([workletCode], { type: 'application/javascript' });
+            const blobURL = URL.createObjectURL(blob);
+
+            // Add the worklet module
+            await audioContext.audioWorklet.addModule(blobURL);
+
+            // Create the AudioWorkletNode
+            audioWorkletNodeRef.current = new AudioWorkletNode(audioContext, 'audio-sender-processor');
+
+            // Handle messages from the AudioWorkletProcessor
+            audioWorkletNodeRef.current.port.onmessage = (event) => {
+                const channelData = event.data; // Float32Array
                 audioBufferRef.current.push(new Float32Array(channelData));
+                bufferLengthRef.current += channelData.length;
 
-                // Convert Float32Array to Int16Array
-                const int16Buffer = convertFloat32ToInt16(channelData);
+                // Check if buffer duration is met
+                const bufferDuration = bufferLengthRef.current / sampleRate;
+                if (bufferDuration >= BUFFER_DURATION) {
+                    // Concatenate all buffered Float32Arrays
+                    const concatenatedBuffer = flattenFloat32Array(audioBufferRef.current);
+                    audioBufferRef.current = [];
+                    bufferLengthRef.current = 0;
 
-                // Convert Int16Array to ArrayBuffer
-                const arrayBuffer = int16Buffer.buffer;
+                    // Convert Float32Array to Int16Array
+                    const int16Buffer = convertFloat32ToInt16(concatenatedBuffer);
 
-                // Send the raw PCM data to backend
-                socketRef.current.emit("audio_data", arrayBuffer);
-                console.log("Sending audio data to backend");
+                    // Send the raw PCM data to backend
+                    socketRef.current.emit("audio_data", int16Buffer.buffer);
+                    console.log("Sending buffered audio data to backend");
+                }
             };
+
+            const source = audioContext.createMediaStreamSource(stream);
+            source.connect(audioWorkletNodeRef.current);
+            audioWorkletNodeRef.current.connect(audioContext.destination);
 
             console.log("Recording started");
         } catch (err) {
@@ -101,13 +138,17 @@ const VoiceTranscriber = () => {
         if (!isRecording) return;
 
         setIsRecording(false);
-        if (scriptProcessorRef.current) {
-            scriptProcessorRef.current.disconnect();
-            scriptProcessorRef.current.onaudioprocess = null;
+        if (audioWorkletNodeRef.current) {
+            audioWorkletNodeRef.current.port.close();
+            audioWorkletNodeRef.current.disconnect();
+            audioWorkletNodeRef.current = null;
         }
         if (audioContextRef.current) {
             audioContextRef.current.close();
+            audioContextRef.current = null;
         }
+        audioBufferRef.current = [];
+        bufferLengthRef.current = 0;
         console.log("Recording stopped");
     };
 
@@ -159,12 +200,28 @@ const VoiceTranscriber = () => {
     );
 };
 
+// Helper function to flatten an array of Float32Arrays into a single Float32Array
+const flattenFloat32Array = (bufferArray) => {
+    let totalLength = 0;
+    bufferArray.forEach((buffer) => {
+        totalLength += buffer.length;
+    });
+    const result = new Float32Array(totalLength);
+    let offset = 0;
+    bufferArray.forEach((buffer) => {
+        result.set(buffer, offset);
+        offset += buffer.length;
+    });
+    return result;
+};
+
 // Helper function to convert Float32Array to Int16Array
 const convertFloat32ToInt16 = (buffer) => {
     let l = buffer.length;
     const buf = new Int16Array(l);
     while (l--) {
-        buf[l] = buffer[l] < 0 ? buffer[l] * 0x8000 : buffer[l] * 0x7fff;
+        let s = Math.max(-1, Math.min(1, buffer[l]));
+        buf[l] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
     return buf;
 };
