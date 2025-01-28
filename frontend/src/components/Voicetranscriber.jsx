@@ -19,8 +19,8 @@ const VoiceTranscriber = () => {
         // Initialize WebSocket connection
         const socketUrl = process.env.REACT_APP_BACKEND_URL || "http://localhost:5001";
         socketRef.current = io(socketUrl, {
-            transports: ["websocket"], // Use WebSocket only
-            upgrade: false, // Do not upgrade from polling to WebSocket
+            transports: ["websocket"], 
+            upgrade: false, 
         });
 
         socketRef.current.on("connect", () => {
@@ -61,7 +61,7 @@ const VoiceTranscriber = () => {
         if (isRecording) return;
 
         setIsRecording(true);
-        setError(null); // Reset any previous errors
+        setError(null);
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();

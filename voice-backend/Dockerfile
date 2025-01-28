@@ -1,44 +1,3 @@
-# This here is for no gpu in a system
-
-# # voice-backend/Dockerfile
-# FROM python:3.10-slim
-
-# # Install system dependencies
-# RUN apt-get update && apt-get install -y \
-#     ffmpeg \
-#     libsndfile1 \
-#     && rm -rf /var/lib/apt/lists/*
-
-# # Set work directory
-# WORKDIR /app
-
-# # Copy requirements
-# COPY requirements.txt .
-
-# # Install Python dependencies
-# RUN pip install --upgrade pip
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# # Download pyannote models (if necessary)
-# # This might require authentication tokens for some models
-# # RUN python -c "from pyannote.audio import Pipeline; Pipeline.from_pretrained('pyannote/speaker-diarization')"
-
-# # Copy application code
-# COPY . .
-
-# # Expose port
-# EXPOSE 5000
-
-# # Run the application
-# CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
-
-# voice-backend/Dockerfile
-
-
-
-
-
-#Below is for with a gpu
 # voice-backend/Dockerfile
 
 # Use an official CUDA runtime as a parent image
@@ -54,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Set the time zone environment variable (modify as needed)
 ENV TZ=Australia/Melbourne
 
-# Install dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     python3-pip \
     ffmpeg \
@@ -64,13 +23,20 @@ RUN apt-get update && apt-get install -y \
     && dpkg-reconfigure --frontend noninteractive tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY requirements.txt .
+# Upgrade pip
 RUN pip3 install --upgrade pip
-RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Set the working directory
 WORKDIR /app
+
+# Copy requirements.txt first to leverage Docker cache
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Create the models directory
+RUN mkdir -p /app/models
 
 # Copy the application code
 COPY . /app
@@ -79,4 +45,4 @@ COPY . /app
 EXPOSE 5000
 
 # Define the default command to run the application
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
