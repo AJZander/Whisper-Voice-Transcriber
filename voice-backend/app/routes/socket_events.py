@@ -48,33 +48,57 @@ buffer_locks = {}
 @sio.event
 async def connect(sid, environ):
     logger.info(f"Client connected: {sid}")
-    audio_buffers[sid] = bytearray()
+    audio_buffers[sid] = {
+        "data": bytearray(),
+        "sample_rate": None
+    }
     buffer_locks[sid] = asyncio.Lock()
     asyncio.create_task(flush_buffer_periodically(sid))
 
 @sio.event
 async def disconnect(sid):
     logger.info(f"Client disconnected: {sid}")
-    if sid in audio_buffers and audio_buffers[sid]:
-        await process_audio(sid, bytes(audio_buffers[sid]))
+    if sid in audio_buffers and audio_buffers[sid]["data"]:
+        await process_audio(sid, bytes(audio_buffers[sid]["data"]), audio_buffers[sid]["sample_rate"])
     if sid in audio_buffers:
         del audio_buffers[sid]
     if sid in buffer_locks:
         del buffer_locks[sid]
 
 @sio.event
-async def audio_data(sid, data):
+async def audio_data(sid, *args):
     """
-    Handle incoming raw PCM audio data from the frontend.
-    Appends the received data to the client's audio buffer.
+    Handle incoming raw PCM audio data and sample rate from the frontend.
+    Expects args to contain [sample_rate, audio_chunk].
     """
     try:
+        logger.debug(f"Received audio_data from sid {sid}: args={args}, type={type(args)}")
+
+        if len(args) != 2:
+            raise ValueError("Invalid number of arguments. Expected sample_rate and audio_chunk.")
+
+        sample_rate, audio_chunk = args
+
+        logger.debug(f"Unpacked sample_rate: {sample_rate}, type: {type(sample_rate)}")
+        logger.debug(f"Unpacked audio_chunk: {len(audio_chunk)} bytes, type: {type(audio_chunk)}")
+
+        if not sample_rate or not audio_chunk:
+            raise ValueError("Sample rate or audio data missing.")
+
         if sid not in audio_buffers:
-            audio_buffers[sid] = bytearray()
+            audio_buffers[sid] = {
+                "data": bytearray(),
+                "sample_rate": sample_rate
+            }
             buffer_locks[sid] = asyncio.Lock()
-        async with buffer_locks[sid]:  # Acquire the lock
-            audio_buffers[sid] += data  # Append data
-            logger.debug(f"Received {len(data)} bytes of audio data from sid: {sid}")
+
+        async with buffer_locks[sid]:
+            # Store sample rate if not already stored
+            if audio_buffers[sid]["sample_rate"] is None:
+                audio_buffers[sid]["sample_rate"] = sample_rate
+            # Append audio data
+            audio_buffers[sid]["data"] += audio_chunk
+            logger.debug(f"Appended {len(audio_chunk)} bytes of audio data to sid: {sid}")
     except Exception as e:
         logger.error(f"Error receiving audio data from sid {sid}: {e}")
         await sio.emit('error', {'message': 'Failed to receive audio data.'}, to=sid)
@@ -87,18 +111,22 @@ async def flush_buffer_periodically(sid):
             if sid not in audio_buffers:
                 logger.info(f"Stopping flush_buffer_periodically for disconnected sid: {sid}")
                 break
-            async with buffer_locks[sid]:  # Acquire the lock
-                if audio_buffers[sid]:
-                    audio_bytes = bytes(audio_buffers[sid])
+            async with buffer_locks[sid]:
+                buffer_info = audio_buffers[sid]
+                sample_rate = buffer_info["sample_rate"]
+                if not sample_rate:
+                    logger.warning(f"No sample rate for sid {sid}, skipping flush.")
+                    continue
+                if buffer_info["data"]:
+                    audio_bytes = bytes(buffer_info["data"])
                     buffer_size = len(audio_bytes)
-                    audio_buffers[sid] = bytearray()  # Reset buffer
+                    audio_buffers[sid]["data"] = bytearray()  # Reset buffer
                     logger.info(f"Flushing {buffer_size} bytes of audio data for sid: {sid}")
                 else:
                     continue
             # Handle overlap
             audio_to_process = previous_audio + audio_bytes
             # Calculate overlap in bytes
-            sample_rate = 192000  # Ensure this matches your audio sample rate
             bytes_per_second = sample_rate * 2  # 16-bit PCM (2 bytes per sample)
             overlap_bytes = OVERLAP_DURATION * bytes_per_second
             if len(audio_bytes) >= overlap_bytes:
@@ -106,11 +134,11 @@ async def flush_buffer_periodically(sid):
             else:
                 previous_audio = audio_bytes
             # Process audio outside the lock to allow buffer filling
-            await process_audio(sid, audio_to_process)
+            await process_audio(sid, audio_to_process, sample_rate)
     except Exception as e:
         logger.error(f"Error in flush_buffer_periodically for sid {sid}: {e}")
 
-async def process_audio(sid, audio_bytes):
+async def process_audio(sid, audio_bytes, sample_rate):
     wav_path = None
     start_time = time.time()
     try:
@@ -120,9 +148,9 @@ async def process_audio(sid, audio_bytes):
         )
         logger.info(f"Noise reduction completed for sid {sid}.")
 
-        # Convert PCM to WAV
+        # Convert PCM to WAV with the correct sample rate
         wav_data = await asyncio.get_event_loop().run_in_executor(
-            executor, convert_pcm_to_wav, denoised_bytes
+            executor, convert_pcm_to_wav, denoised_bytes, sample_rate
         )
         logger.info(f"PCM to WAV conversion completed for sid {sid}.")
 
@@ -167,3 +195,4 @@ async def process_audio(sid, audio_bytes):
                 logger.info(f"Temporary file {wav_path} removed.")
             except Exception as e:
                 logger.error(f"Failed to remove temporary file {wav_path}: {e}")
+

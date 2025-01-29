@@ -50,7 +50,7 @@ export const startAudioCapture = async () => {
             // Convert to Int16
             const int16Buffer = convertFloat32ToInt16(concatBuffer);
             // Emit through socket
-            getSocket().emit("audio_data", int16Buffer.buffer);
+            getSocket().emit("audio_data", sampleRate, int16Buffer.buffer);
             // Debug
             // console.log("Sent audio data to backend, length:", int16Buffer.length);
         }
