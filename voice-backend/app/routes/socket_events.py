@@ -30,7 +30,7 @@ sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins=origins)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 whisper_models = WhisperModels(device=device)
 transcription_service = TranscriptionService(whisper_models=whisper_models)
-diarization_pipeline = DiarizationPipeline()
+diarization_pipeline = DiarizationPipeline(device=device)
 diarization_service = DiarizationService(diarization_pipeline=diarization_pipeline)
 audio_processor = AudioProcessor()
 
@@ -64,6 +64,19 @@ async def disconnect(sid):
         del audio_buffers[sid]
     if sid in buffer_locks:
         del buffer_locks[sid]
+        
+@sio.event
+async def diarization_config(sid, config):
+    """
+    Save diarization configuration for this session ID.
+    E.g., store in a dictionary keyed by `sid`.
+    """
+    if sid not in audio_buffers:
+        audio_buffers[sid] = {"data": bytearray(), "sample_rate": None}
+    # Let's store this config as well:
+    audio_buffers[sid]["diarization_config"] = config
+    logger.info(f"Received diarization config for sid {sid}: {config}")
+    
 
 @sio.event
 async def audio_data(sid, *args):
@@ -142,6 +155,7 @@ async def process_audio(sid, audio_bytes, sample_rate):
     wav_path = None
     start_time = time.time()
     try:
+        diarization_config = audio_buffers[sid].get("diarization_config", {})
         # Noise reduction
         denoised_bytes = await asyncio.get_event_loop().run_in_executor(
             executor, audio_processor.reduce_noise, audio_bytes
@@ -166,9 +180,10 @@ async def process_audio(sid, audio_bytes, sample_rate):
         )
         logger.info(f"Transcription completed for sid {sid}: {transcription_text}")
 
-        # Diarization
+        # # Diarization
+        # speakers = []
         speakers = await asyncio.get_event_loop().run_in_executor(
-            executor, diarization_service.diarize_audio, wav_path
+            executor, diarization_service.diarize_audio, wav_path, diarization_config
         )
         logger.info(f"Diarization completed for sid {sid}.")
 

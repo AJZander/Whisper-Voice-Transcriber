@@ -9,9 +9,9 @@ class DiarizationService:
     def __init__(self, diarization_pipeline: DiarizationPipeline):
         self.diarization_pipeline = diarization_pipeline
 
-    def diarize_audio(self, wav_path: str):
+    def diarize_audio(self, wav_path: str, diarization_config: dict):
         try:
-            diarization = self.diarization_pipeline.diarize(wav_path)
+            diarization = self.diarization_pipeline.diarize(wav_path, diarization_config)
             speakers = []
             for turn, _, speaker in diarization.itertracks(yield_label=True):
                 speakers.append({

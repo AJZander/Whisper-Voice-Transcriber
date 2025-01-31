@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useCallback } from "react";
-import { initSocket, disconnectSocket } from "../services/socketService";
+import { initSocket, getSocket, disconnectSocket } from "../services/socketService";
 import { startAudioCapture, stopAudioCapture } from "../services/audioProcessingService";
 
 export const TranscriptionContext = createContext();
@@ -70,7 +70,7 @@ export const TranscriptionProvider = ({ children }) => {
     }, []);
 
     // --- Recording logic
-    const startRecording = useCallback(async () => {
+    const startRecording = useCallback(async (diarizationConfig) => {
         if (!isRecording) {
             setError(null);
             setPartialTranscripts([]);
@@ -78,7 +78,8 @@ export const TranscriptionProvider = ({ children }) => {
             setSpeakers([]);
             setIsRecording(true);
             try {
-                await startAudioCapture();
+				
+                await startAudioCapture(diarizationConfig);
             } catch (err) {
                 console.error("Failed to start recording:", err);
                 setError("Failed to access microphone. Please check your permissions.");

@@ -1,8 +1,20 @@
 
 services:
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "3000:80" 
+  #   depends_on:
+  #     - backend
+  #   env_file:
+  #     - .env 
+  #   networks:
+  #     - voice-transcription_network
   frontend:
     build:
-      context: ./frontend
+      context: ./new-frontend
       dockerfile: Dockerfile
     ports:
       - "3000:80" 
@@ -30,10 +42,13 @@ services:
       resources:
         reservations:
           devices:
-            - capabilities: [gpu]
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     # runtime: nvidia 
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all 
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 volumes:
   whisper_model_data:

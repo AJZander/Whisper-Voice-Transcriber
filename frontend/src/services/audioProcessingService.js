@@ -7,13 +7,16 @@ let audioBufferRef = [];
 let bufferLengthRef = 0;
 
 // Customize as needed
-const BUFFER_DURATION = 1; // 1 second
+const BUFFER_DURATION = 1;
 let sampleRate = 44100;
 
-export const startAudioCapture = async () => {
+export const startAudioCapture = async (diarizationConfig) => {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     sampleRate = audioContext.sampleRate;
+
+	console.log(diarizationConfig);
+	getSocket().emit("diarization_config", diarizationConfig);
 
     // Create AudioWorklet
     const workletCode = `
