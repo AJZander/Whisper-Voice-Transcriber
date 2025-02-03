@@ -1,45 +1,52 @@
+// src/services/audioProcessingService.ts
 import { getSocket } from "./socketService";
 
-let audioContext;
-let audioWorkletNode;
-let mediaStream;
-let audioBufferRef = [];
+let audioContext: AudioContext | null = null;
+let audioWorkletNode: AudioWorkletNode | null = null;
+let mediaStream: MediaStream | null = null;
+
+let audioBufferRef: Float32Array[] = [];
 let bufferLengthRef = 0;
 
-// Customize as needed
 const BUFFER_DURATION = 1;
 let sampleRate = 44100;
 
-export const startAudioCapture = async (diarizationConfig) => {
+interface DiarizationConfig {
+    num_speakers: number;
+    min_duration_off: number;
+    offset: number;
+}
+
+export const startAudioCapture = async (diarizationConfig: DiarizationConfig) => {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     sampleRate = audioContext.sampleRate;
 
-	console.log(diarizationConfig);
-	getSocket().emit("diarization_config", diarizationConfig);
+    // Send config to server
+    getSocket().emit("diarization_config", diarizationConfig);
 
-    // Create AudioWorklet
+    // Create a minimal audio worklet
     const workletCode = `
-      class AudioSenderProcessor extends AudioWorkletProcessor {
-          process(inputs, outputs, parameters) {
-              const input = inputs[0];
-              if (input.length > 0) {
-                  const channelData = input[0];
-                  this.port.postMessage(channelData);
-              }
-              return true;
-          }
-      }
-      registerProcessor('audio-sender-processor', AudioSenderProcessor);
+    class AudioSenderProcessor extends AudioWorkletProcessor {
+        process(inputs, outputs, parameters) {
+            const input = inputs[0];
+            if (input.length > 0) {
+                const channelData = input[0];
+                this.port.postMessage(channelData);
+            }
+            return true;
+        }
+    }
+    registerProcessor('audio-sender-processor', AudioSenderProcessor);
   `;
+
     const blob = new Blob([workletCode], { type: "application/javascript" });
     const blobURL = URL.createObjectURL(blob);
 
     await audioContext.audioWorklet.addModule(blobURL);
     audioWorkletNode = new AudioWorkletNode(audioContext, "audio-sender-processor");
 
-    // Message from worklet
-    audioWorkletNode.port.onmessage = (event) => {
+    audioWorkletNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
         const channelData = event.data;
         audioBufferRef.push(new Float32Array(channelData));
         bufferLengthRef += channelData.length;
@@ -54,8 +61,6 @@ export const startAudioCapture = async (diarizationConfig) => {
             const int16Buffer = convertFloat32ToInt16(concatBuffer);
             // Emit through socket
             getSocket().emit("audio_data", sampleRate, int16Buffer.buffer);
-            // Debug
-            // console.log("Sent audio data to backend, length:", int16Buffer.length);
         }
     };
 
@@ -82,8 +87,8 @@ export const stopAudioCapture = () => {
     bufferLengthRef = 0;
 };
 
-// Utility function to flatten arrays
-function flattenFloat32Array(bufferArray) {
+// ---- Utils
+function flattenFloat32Array(bufferArray: Float32Array[]): Float32Array {
     let totalLength = 0;
     bufferArray.forEach((buf) => {
         totalLength += buf.length;
@@ -97,12 +102,12 @@ function flattenFloat32Array(bufferArray) {
     return result;
 }
 
-function convertFloat32ToInt16(buffer) {
+function convertFloat32ToInt16(buffer: Float32Array): Int16Array {
     const l = buffer.length;
-    const buf = new Int16Array(l);
+    const out = new Int16Array(l);
     for (let i = 0; i < l; i++) {
-        let s = Math.max(-1, Math.min(1, buffer[i]));
-        buf[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        const s = Math.max(-1, Math.min(1, buffer[i]));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
-    return buf;
+    return out;
 }

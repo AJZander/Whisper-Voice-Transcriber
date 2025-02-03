@@ -1,23 +1,14 @@
-# voice-transcription-app/Dockerfile
-# Stage 1: Build
-FROM node:18 as build
+FROM node:18
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm install
 
-COPY . .
-RUN npm run build
-
-# Stage 2: Serve
-FROM nginx:alpine
-
-COPY --from=build /app/build /usr/share/nginx/html
-
-# Copy custom Nginx configuration if needed
-# COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Remove COPY . . and build steps
+# Development server will handle hot reloading
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+# Run development server instead of nginx
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "80"]

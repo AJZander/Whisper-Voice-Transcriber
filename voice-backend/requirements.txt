@@ -10,3 +10,4 @@ ffmpeg-python
 noisereduce
 soundfile
 numpy
+transformers

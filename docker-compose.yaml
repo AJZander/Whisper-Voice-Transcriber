@@ -1,20 +1,8 @@
 
 services:
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3000:80" 
-  #   depends_on:
-  #     - backend
-  #   env_file:
-  #     - .env 
-  #   networks:
-  #     - voice-transcription_network
   frontend:
     build:
-      context: ./new-frontend
+      context: ./frontend
       dockerfile: Dockerfile
     ports:
       - "3000:80" 
@@ -22,6 +10,9 @@ services:
       - backend
     env_file:
       - .env 
+    volumes:
+      - ./frontend:/app  
+      - /app/node_modules
     networks:
       - voice-transcription_network
 

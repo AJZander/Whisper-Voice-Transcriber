@@ -6,7 +6,9 @@ import logging
 import difflib
 import os
 from app.config import Config 
-
+import soundfile as sf
+import numpy as np
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +28,23 @@ class WhisperModels:
             logger.info(f"Whisper model '{name}' loaded on {self.device}.")
         logger.info(f"All Whisper models loaded on {self.device}.")
 
-    def transcribe(self, wav_path: str, language: str = "en") -> dict:
-        transcriptions = {}
+    def transcribe(self, wav_path: str, language: str = "en", chunk_duration: int = 600) -> dict:
+        audio, sample_rate = sf.read(wav_path)
+        chunk_size = chunk_duration * sample_rate
+        chunks = [audio[i:i + chunk_size] for i in range(0, len(audio), chunk_size)]        
+        all_transcriptions = {}     
         for name, model in self.models.items():
-            logger.info(f"Transcribing with Whisper model: {name}")
-            result = model.transcribe(wav_path, language=language)
-            transcriptions[name] = result['text']
-            logger.info(f"Transcription with '{name}' completed.")
+            transcriptions = []
+            for chunk in chunks:
+                with tempfile.NamedTemporaryFile(suffix=".wav") as temp_chunk:
+                    sf.write(temp_chunk.name, chunk, sample_rate)
+                    result = model.transcribe(temp_chunk.name, language=language)
+                    transcriptions.append(result['text'])
+            all_transcriptions[name] = ' '.join(transcriptions)
     
         # If only one model is loaded, return its transcription
-        if len(transcriptions) < 2:
-            selected_text = next(iter(transcriptions.values()))
+        if len(all_transcriptions) < 2:
+            selected_text = next(iter(all_transcriptions.values()))
             logger.info("Only one model available. Selecting its transcription.")
             return {'text': selected_text}
     
