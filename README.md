@@ -1,9 +1,7 @@
 # VoiceTranscriber
 
 **VoiceTranscriber** is a real-time voice transcription and speaker diarization application. It consists of a React frontend and a Python backend,openAI's whisper model to transcribe audio input and identify different speakers on the backend, whilst doing browser based real time transcription on the frontend.
-
-I am still working on the process of merging the real time transcript from the front end and the transcript generated from whisper.
-
+Once the whisper model returns its transcription, both realtime and whisper transcriptions are passed into another model on the backend to create the best transcription possible out of the two provided.
 
 ## Table of Contents
 
@@ -122,5 +120,5 @@ Note: the front end is intentionally plain as i am really only interested in the
 
 ## Contact
 
-For any inquiries, please contact [awisely@zandercs.com](mailto:awisely@zandercs.com).
+For any inquiries, please contact [awisely@mygene.com.au](mailto:awisely@mygene.com.au).
 
